@@ -1,0 +1,174 @@
+stages:
+  - quality
+  - smoke
+  - responsive
+  - regression
+  - notify
+
+variables:
+  NODE_VERSION: "18"
+  SELF_HEALING_ENABLED: "false"     # Set to 'true' via CI/CD variable if needed
+
+# Cache both npm and Playwright browsers
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - node_modules/
+    - ~/.cache/ms-playwright/
+
+# ==================== QUALITY GATE (every push) ====================
+lint-and-format:
+  stage: quality
+  image: node:${NODE_VERSION}
+  script:
+    - npm ci
+    - npm run lint:check
+    - npm run format:check
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# ==================== SMOKE (every push) ====================
+smoke-chromium:
+  stage: smoke
+  image: mcr.microsoft.com/playwright:latest
+  script:
+    - npm ci
+    - npx playwright install --with-deps chromium
+    - npx playwright test --project=chromium --grep "@smoke"
+  artifacts:
+    when: always
+    paths:
+      - enhanced-report/
+      - playwright-report/
+      - test-results/
+    expire_in: 7 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# ==================== RESPONSIVE (main & schedule) ====================
+responsive-chromium:
+  stage: responsive
+  image: mcr.microsoft.com/playwright:latest
+  script:
+    - npm ci
+    - npx playwright install --with-deps chromium
+    - npx playwright test --project=chromium --grep "@responsive"
+  artifacts:
+    when: always
+    paths:
+      - enhanced-report/
+      - playwright-report/
+      - test-results/
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+responsive-firefox:
+  stage: responsive
+  image: mcr.microsoft.com/playwright:latest
+  script:
+    - npm ci
+    - npx playwright install --with-deps firefox
+    - npx playwright test --project=firefox --grep "@responsive"
+  artifacts:
+    when: always
+    paths:
+      - enhanced-report/
+      - playwright-report/
+      - test-results/
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+responsive-webkit:
+  stage: responsive
+  image: mcr.microsoft.com/playwright:latest
+  script:
+    - npm ci
+    - npx playwright install --with-deps webkit
+    - npx playwright test --project=webkit --grep "@responsive"
+  artifacts:
+    when: always
+    paths:
+      - enhanced-report/
+      - playwright-report/
+      - test-results/
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+# ==================== REGRESSION (main & schedule) ====================
+regression-chromium:
+  stage: regression
+  image: mcr.microsoft.com/playwright:latest
+  script:
+    - npm ci
+    - npx playwright install --with-deps chromium
+    - npx playwright test --project=chromium --grep "@regression"
+  artifacts:
+    when: always
+    paths:
+      - enhanced-report/
+      - playwright-report/
+      - test-results/
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+regression-firefox:
+  stage: regression
+  image: mcr.microsoft.com/playwright:latest
+  script:
+    - npm ci
+    - npx playwright install --with-deps firefox
+    - npx playwright test --project=firefox --grep "@regression"
+  artifacts:
+    when: always
+    paths:
+      - enhanced-report/
+      - playwright-report/
+      - test-results/
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+regression-webkit:
+  stage: regression
+  image: mcr.microsoft.com/playwright:latest
+  script:
+    - npm ci
+    - npx playwright install --with-deps webkit
+    - npx playwright test --project=webkit --grep "@regression"
+  artifacts:
+    when: always
+    paths:
+      - enhanced-report/
+      - playwright-report/
+      - test-results/
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+# ==================== NOTIFY ON FAILURE ====================
+notify-failure:
+  stage: notify
+  image: alpine:latest
+  script:
+    - echo "Tests failed on branch ${CI_COMMIT_BRANCH} – Pipeline: ${CI_PIPELINE_URL}"
+    # Add curl to Slack/Teams webhook here
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_JOB_STATUS == "failed"
+      when: on_failure
+  needs:
+    - responsive-chromium
+    - responsive-firefox
+    - responsive-webkit
+    - regression-chromium
+    - regression-firefox
+    - regression-webkit

@@ -1,0 +1,66 @@
+parameters:
+  - name: browser
+    type: string
+  - name: grep
+    type: string
+  - name: jobName
+    type: string
+  - name: timeoutInMinutes
+    type: number
+    default: 30
+
+steps:
+  - task: NodeTool@0
+    inputs:
+      versionSpec: $(NODE_VERSION)
+    displayName: 'Install Node.js'
+
+  # Cache npm
+  - task: Cache@2
+    inputs:
+      key: 'npm | "$(Agent.OS)" | package-lock.json'
+      restoreKeys: |
+        npm | "$(Agent.OS)"
+      path: $(npm_config_cache)
+    displayName: 'Cache npm packages'
+
+  - script: npm ci
+    displayName: 'Install dependencies'
+
+  # Cache Playwright browsers
+  - task: Cache@2
+    inputs:
+      key: 'playwright | "$(Agent.OS)" | package-lock.json'
+      restoreKeys: |
+        playwright | "$(Agent.OS)"
+      path: $(HOME)/.cache/ms-playwright
+    displayName: 'Cache Playwright browsers'
+
+  - script: npx playwright install --with-deps ${{ parameters.browser }}
+    displayName: 'Install ${{ parameters.browser }}'
+
+  - script: |
+      npx playwright test \
+        --project=${{ parameters.browser }} \
+        --grep "${{ parameters.grep }}"
+    displayName: 'Run ${{ parameters.grep }} on ${{ parameters.browser }}'
+    timeoutInMinutes: ${{ parameters.timeoutInMinutes }}
+    continueOnError: true
+    env:
+      BASE_URL: $(BASE_URL)
+      SELF_HEALING_ENABLED: $(SELF_HEALING_ENABLED)
+      DEEPSEEK_API_KEY: $(DEEPSEEK_API_KEY)    # secure variable
+
+  - task: PublishPipelineArtifact@1
+    inputs:
+      targetPath: 'enhanced-report'
+      artifact: 'enhanced-report-${{ parameters.jobName }}-$(Build.BuildId)'
+    displayName: 'Publish enhanced report'
+    condition: succeededOrFailed()
+
+  - task: PublishPipelineArtifact@1
+    inputs:
+      targetPath: 'test-results'
+      artifact: 'artifacts-${{ parameters.jobName }}-$(Build.BuildId)'
+    displayName: 'Publish test artifacts'
+    condition: succeededOrFailed()

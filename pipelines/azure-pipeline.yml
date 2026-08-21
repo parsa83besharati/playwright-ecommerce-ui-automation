@@ -1,0 +1,157 @@
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - feature/*
+      - bugfix/*
+  paths:
+    include:
+      - tests/**
+      - pages/**
+      - fixtures/**
+      - services/**
+      - utils/**
+      - playwright.config.ts
+      - package.json
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+schedules:
+  - cron: '0 6 * * *'            # Daily at 6 AM
+    displayName: Daily full run
+    branches:
+      include:
+        - main
+    always: true
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - group: playwright-secrets   # Contains DEEPSEEK_API_KEY etc.
+  - name: NODE_VERSION
+    value: '18.x'
+  - name: SELF_HEALING_ENABLED
+    value: 'false'               # Set to 'true' when ready
+
+stages:
+  # ==================== QUALITY GATE ====================
+  - stage: QualityGate
+    displayName: '🔍 Code Quality'
+    jobs:
+      - job: LintAndFormat
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: $(NODE_VERSION)
+          - script: npm ci
+          - script: npm run lint:check
+          - script: npm run format:check
+
+  # ==================== SMOKE TESTS (every push) ====================
+  - stage: SmokeTests
+    displayName: '🔥 Smoke'
+    dependsOn: QualityGate
+    condition: succeeded()
+    jobs:
+      - job: SmokeChromium
+        timeoutInMinutes: 15
+        steps:
+          - template: steps/run-tests-template.yml
+            parameters:
+              browser: 'chromium'
+              grep: '@smoke'
+              jobName: 'Smoke-Chromium'
+
+  # ==================== RESPONSIVE TESTS (main / scheduled) ====================
+  - stage: ResponsiveTests
+    displayName: '📱 Responsive'
+    dependsOn: QualityGate
+    condition: |
+      or(
+        eq(variables['Build.Reason'], 'Schedule'),
+        eq(variables['Build.SourceBranch'], 'refs/heads/main')
+      )
+    jobs:
+      - job: ResponsiveChromium
+        timeoutInMinutes: 30
+        steps:
+          - template: steps/run-tests-template.yml
+            parameters:
+              browser: 'chromium'
+              grep: '@responsive'
+              jobName: 'Responsive-Chromium'
+      - job: ResponsiveFirefox
+        timeoutInMinutes: 30
+        steps:
+          - template: steps/run-tests-template.yml
+            parameters:
+              browser: 'firefox'
+              grep: '@responsive'
+              jobName: 'Responsive-Firefox'
+      - job: ResponsiveWebkit
+        timeoutInMinutes: 30
+        steps:
+          - template: steps/run-tests-template.yml
+            parameters:
+              browser: 'webkit'
+              grep: '@responsive'
+              jobName: 'Responsive-Webkit'
+
+  # ==================== REGRESSION TESTS (main / scheduled) ====================
+  - stage: RegressionTests
+    displayName: '🔄 Full Regression'
+    dependsOn: QualityGate
+    condition: |
+      or(
+        eq(variables['Build.Reason'], 'Schedule'),
+        eq(variables['Build.SourceBranch'], 'refs/heads/main')
+      )
+    jobs:
+      - job: RegressionChromium
+        timeoutInMinutes: 45
+        steps:
+          - template: steps/run-tests-template.yml
+            parameters:
+              browser: 'chromium'
+              grep: '@regression'
+              jobName: 'Regression-Chromium'
+              timeoutInMinutes: 40
+      - job: RegressionFirefox
+        timeoutInMinutes: 45
+        steps:
+          - template: steps/run-tests-template.yml
+            parameters:
+              browser: 'firefox'
+              grep: '@regression'
+              jobName: 'Regression-Firefox'
+              timeoutInMinutes: 40
+      - job: RegressionWebkit
+        timeoutInMinutes: 45
+        steps:
+          - template: steps/run-tests-template.yml
+            parameters:
+              browser: 'webkit'
+              grep: '@regression'
+              jobName: 'Regression-Webkit'
+              timeoutInMinutes: 40
+
+  # ==================== NOTIFICATION ====================
+  - stage: Notify
+    displayName: '🔔 Notify'
+    dependsOn:
+      - ResponsiveTests
+      - RegressionTests
+    condition: failed()
+    jobs:
+      - job: SendAlert
+        steps:
+          - script: |
+              echo "Tests failed on branch $(Build.SourceBranch) - Pipeline: $(Build.BuildId)"
+              # Add your Slack/Teams webhook curl command here
+            displayName: 'Send failure notification'
